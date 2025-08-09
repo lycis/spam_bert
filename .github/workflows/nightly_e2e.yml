@@ -14,7 +14,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     env:
-      TRANSFORMERS_CACHE: ${{ runner.temp }}/hf_cache
+      TRANSFORMERS_CACHE: ${{ github.workspace }}/.hf_cache   # <-- here too
 
     steps:
       - uses: actions/checkout@v4
