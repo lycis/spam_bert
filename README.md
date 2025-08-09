@@ -1,4 +1,5 @@
 # Spam BERT Detector
+![Logo](spambert_logo.png)
 
 A flexible spam/ham classifier powered by Hugging Face Transformers.  
 Supports both **command-line** and **REST API** usage, with:
