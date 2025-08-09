@@ -1,5 +1,9 @@
 # Spam BERT Detector
 ![Logo](spambert_logo.png)
+![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)
+![Python 3.10+](https://img.shields.io/badge/python-3.10%2B-blue)
+![Tests](https://github.com/youruser/spam-bert-detector/actions/workflows/tests.yml/badge.svg)
+![Powered by BERT](https://img.shields.io/badge/powered%20by-BERT-orange)
 
 A flexible spam/ham classifier powered by Hugging Face Transformers.  
 Supports both **command-line** and **REST API** usage, with:
