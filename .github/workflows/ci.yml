@@ -58,7 +58,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 25
     env:
-      TRANSFORMERS_CACHE: ${{ runner.temp }}/hf_cache
+      TRANSFORMERS_CACHE: ${{ github.workspace }}/.hf_cache   # <-- use workspace path
 
     steps:
       - uses: actions/checkout@v4
@@ -72,7 +72,7 @@ jobs:
       - name: Cache HF models
         uses: actions/cache@v4
         with:
-          path: ${{ env.TRANSFORMERS_CACHE }}
+          path: ${{ env.TRANSFORMERS_CACHE }}                 # <-- reference env var
           key: hf-${{ runner.os }}-${{ hashFiles('requirements.txt') }}
 
       - name: Install dependencies
