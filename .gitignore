@@ -1,0 +1,73 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.pkl
+*.pyd
+*.pyc
+*$py.class
+
+# Virtual environments
+.venv/
+env/
+venv/
+ENV/
+env.bak/
+venv.bak/
+
+# OS-specific
+.DS_Store
+Thumbs.db
+
+# IDE settings
+.vscode/
+.idea/
+*.sublime-project
+*.sublime-workspace
+
+# Logs & debug
+*.log
+logs/
+debug.log
+
+# Hugging Face cache/model dirs
+# Keep your downloaded model cache out of Git
+huggingface/
+cache/
+transformers_cache/
+models_cache/
+models/email-spam/
+**/pytorch_model.bin
+**/tf_model.h5
+**/rust_model.ot
+**/flax_model.msgpack
+**/tokenizer.json
+**/tokenizer_config.json
+**/vocab.txt
+**/special_tokens_map.json
+
+# PyInstaller / build artifacts
+build/
+dist/
+*.spec
+
+# Local data / tests
+*.eml
+*.json
+*.csv
+data/
+tmp/
+__tmp__.eml
+
+# Jupyter Notebook checkpoints
+.ipynb_checkpoints/
+
+# Coverage / test
+htmlcov/
+.tox/
+.coverage
+coverage.xml
+.pytest_cache/
+.mypy_cache/
+.pyre/
