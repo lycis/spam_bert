@@ -34,22 +34,24 @@ jobs:
           python-version: ${{ matrix.python-version }}
           cache: "pip"
 
-      - name: Install dependencies
+      - name: Install dependencies (package + dev)
         run: |
           python -m pip install --upgrade pip
-          pip install -r requirements.txt
+          pip install -e .
           pip install -r requirements-dev.txt
 
-      - name: Run unit tests (no slow/e2e)
+      - name: Run unit tests (no slow/e2e) with coverage
         run: |
           pytest -m "not slow and not e2e" --cov=spam_bert --cov-report=xml --cov-report=term-missing
 
-      - name: Upload coverage to Codecov (optional)
-        if: env.CODECOV_TOKEN != ''
+      - name: Upload coverage to Codecov
+        # Public repos: always upload. Private: upload only if token is set.
+        if: ${{ !github.event.repository.private || secrets.CODECOV_TOKEN != '' }}
         uses: codecov/codecov-action@v4
         with:
-          token: ${{ secrets.CODECOV_TOKEN }}
           files: ./coverage.xml
+          token: ${{ secrets.CODECOV_TOKEN }}          # not required for public repos
+          flags: ${{ runner.os }}-py${{ matrix.python-version }}
           fail_ci_if_error: false
 
   e2e-tests:
@@ -58,7 +60,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 25
     env:
-      TRANSFORMERS_CACHE: ${{ github.workspace }}/.hf_cache   # <-- use workspace path
+      TRANSFORMERS_CACHE: ${{ github.workspace }}/.hf_cache
 
     steps:
       - uses: actions/checkout@v4
@@ -72,13 +74,13 @@ jobs:
       - name: Cache HF models
         uses: actions/cache@v4
         with:
-          path: ${{ env.TRANSFORMERS_CACHE }}                 # <-- reference env var
+          path: ${{ env.TRANSFORMERS_CACHE }}
           key: hf-${{ runner.os }}-${{ hashFiles('requirements.txt') }}
 
-      - name: Install dependencies
+      - name: Install dependencies (package + dev)
         run: |
           python -m pip install --upgrade pip
-          pip install -r requirements.txt
+          pip install -e .
           pip install -r requirements-dev.txt
 
       - name: Run E2E tests (downloads tiny model once)
