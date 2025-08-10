@@ -39,7 +39,7 @@ jobs:
 
       - name: Build binary with PyInstaller
         run: |
-          pyinstaller --onefile src/spam_bert/main.py --name spam-bert
+          pyinstaller --onefile src/spam_bert/app.py --name spam-bert
           python -c "import glob; print('Built:', glob.glob('dist/*'))"
 
       - name: Upload artifact
