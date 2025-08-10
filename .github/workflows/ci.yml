@@ -19,6 +19,8 @@ jobs:
   unit-tests:
     name: Unit tests (${{ matrix.os }} / py${{ matrix.python-version }})
     runs-on: ${{ matrix.os }}
+    env:
+      CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}   # <-- make secret available as env
     strategy:
       fail-fast: false
       matrix:
@@ -45,12 +47,12 @@ jobs:
           pytest -m "not slow and not e2e" --cov=spam_bert --cov-report=xml --cov-report=term-missing
 
       - name: Upload coverage to Codecov
-        # Public repos: always upload. Private: upload only if token is set.
-        if: ${{ !github.event.repository.private || secrets.CODECOV_TOKEN != '' }}
+        # Public repos: always upload; Private: upload only if token present
+        if: ${{ !github.event.repository.private || env.CODECOV_TOKEN != '' }}
         uses: codecov/codecov-action@v4
         with:
           files: ./coverage.xml
-          token: ${{ secrets.CODECOV_TOKEN }}          # not required for public repos
+          token: ${{ env.CODECOV_TOKEN }}          # not required for public repos
           flags: ${{ runner.os }}-py${{ matrix.python-version }}
           fail_ci_if_error: false
 
