@@ -27,7 +27,8 @@ RUN useradd -ms /bin/bash appuser
 USER appuser
 
 EXPOSE 8000
-ENV TRANSFORMERS_CACHE=/app/.hf_cache
+
+ENV TRANSFORMERS_CACHE=/tmp/hf_cache
 
 # default command: serve API
 CMD ["python", "-m", "spam_bert", "--serve", "--host", "0.0.0.0", "--port", "8000"]
