@@ -111,3 +111,26 @@ pyinstaller --onefile src/spam_bert/main.py --name spam-bert
 ## 📜 License
 
 Licensed under the [MIT License](LICENSE).
+
+## 🛣 Roadmap
+### 0.2.x — Benchmarking & API Hardening
+  * Add reproducible benchmark suite using Enron Spam Dataset
+  * Report Precision / Recall / F1 / ROC-AUC with per-subset breakdown
+  * Implement API key authentication & per-client rate limiting
+  * Add request size limits, CORS configuration, and trusted host checks
+  * Optional: disable API docs in production
+
+### 0.3.x — Deployment & Distribution
+ * Pre-built Docker images (CI / nightly / tagged release variants)
+ * One-file binaries via PyInstaller for offline use
+ * Improved HF model caching in container environments
+
+### 0.4.x — Advanced Features
+ * Model benchmarking against multiple datasets (SMS Spam, Ling-Spam)
+ * Support for additional model backends (DistilBERT, RoBERTa)
+ * Configurable multi-model voting ensemble
+
+### 0.5.x — Production Maturity
+ * Monitoring & metrics export (Prometheus)
+ * CI/CD security scanning (SAST/DAST)
+ * Optional web dashboard for interactive testing
