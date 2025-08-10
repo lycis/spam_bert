@@ -87,7 +87,7 @@ pip install -e .
 ### From Docker
 
 ```bash
-docker run -p 9000:9000 ghcr.io/lycis/spam_bert:latest
+docker run -p 8000:8000 ghcr.io/lycis/spam_bert:latest
 ```
 
 You can also pull:
