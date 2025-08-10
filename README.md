@@ -4,6 +4,7 @@
 ![Python 3.10+](https://img.shields.io/badge/python-3.10%2B-blue)
 [![codecov](https://codecov.io/gh/YOUR_USER/spam_bert/branch/main/graph/badge.svg)](https://codecov.io/gh/YOUR_USER/spam_bert)
 ![Powered by BERT](https://img.shields.io/badge/powered%20by-BERT-orange)
+![Container](https://img.shields.io/badge/container-GHCR-blue)
 
 A flexible spam/ham classifier powered by Hugging Face Transformers.  
 Supports both **command-line** and **REST API** usage, with:
