@@ -16,7 +16,7 @@ COPY requirements.txt ./
 RUN pip install --upgrade pip && pip install -r requirements.txt
 
 # copy package (src-layout) + entry
-COPY pyproject.toml setup.cfg README.md LICENSE ./
+COPY pyproject.toml setup.cfg README.md LICENSE.md ./
 COPY src ./src
 
 # install package into image
