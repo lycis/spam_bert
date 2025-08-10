@@ -1,5 +1,5 @@
 from pathlib import Path
-from spam_bert import main as app
+import spam_bert.app as app
 
 
 def test_resolve_prefers_explicit_local(tmp_path: Path, monkeypatch):

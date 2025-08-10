@@ -1,5 +1,5 @@
 from pathlib import Path
-from spam_bert import main as app
+import spam_bert.app as app
 
 
 def test_html_to_text_basic():

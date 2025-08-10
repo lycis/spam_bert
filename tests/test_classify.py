@@ -1,4 +1,4 @@
-from spam_bert import main as app
+import spam_bert.app as app
 
 
 def test_classify_short_text(monkeypatch, fake_tokenizer, fake_pipeline_factory):

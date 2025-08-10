@@ -1,6 +1,6 @@
 from pathlib import Path
 import pytest
-from spam_bert import main as app
+import spam_bert.app as app
 
 
 def test_extract_text_from_eml_plain(tmp_path: Path):
