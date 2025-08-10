@@ -1,6 +1,7 @@
 # 📧 Spam BERT Detector
 
 ![Logo](spambert_logo.png)
+
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 ![Python 3.10+](https://img.shields.io/badge/python-3.10%2B-blue)
 [![Build Status](https://github.com/lycis/spam_bert/actions/workflows/ci.yml/badge.svg)](https://github.com/lycis/spam_bert/actions)
