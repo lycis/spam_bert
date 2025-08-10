@@ -1,8 +1,7 @@
-import base64
 from pathlib import Path
 import pytest
-import spam_bert as app
-import httpx
+from spam_bert import main as app
+
 
 def test_extract_text_from_eml_plain(tmp_path: Path):
     eml = (

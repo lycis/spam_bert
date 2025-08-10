@@ -1,5 +1,3 @@
-import os
-import json
 import pytest
 from pathlib import Path
 
@@ -10,7 +8,7 @@ pytest.importorskip("httpx")
 from fastapi.testclient import TestClient
 from huggingface_hub import snapshot_download
 
-import spam_bert as app
+from spam_bert import main as app
 
 MODEL_ID = "mrm8488/bert-tiny-finetuned-sms-spam-detection"
 

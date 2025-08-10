@@ -25,7 +25,7 @@ Perfect for integrating spam detection into email gateways, webhooks, or automat
 
 - REST API mode
 ```bash
-python spam_bert.py --serve --port 9000 --model AntiSpamInstitute/spam-detector-bert-MoE-v2.2
+python main.py --serve --port 9000 --model AntiSpamInstitute/spam-detector-bert-MoE-v2.2
 ```
 
 - Endpoints 

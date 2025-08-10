@@ -1,5 +1,5 @@
-from pathlib import Path
-import spam_bert as app
+from spam_bert import main as app
+
 
 def test_classify_short_text(monkeypatch, fake_tokenizer, fake_pipeline_factory):
     # patch tokenizer & pipeline cache

@@ -1,7 +1,6 @@
-import os
 from pathlib import Path
-import tempfile
-import spam_bert as app
+from spam_bert import main as app
+
 
 def test_html_to_text_basic():
     html = "<p>Hello <b>you</b></p>"
