@@ -30,7 +30,7 @@ def test_rest_classify_smoke(monkeypatch):
     from fastapi.testclient import TestClient
 
     # stub classify_text so REST stays fast
-    def fake_classify(text, model_name=None, threshold=0.6, local_model_dir=None, model_cache_dir=None):
+    def fake_classify(text, model_name=None, threshold=0.6, local_model_dir=None, model_cache_dir=None, **kwargs):
         return {
             "decision": "ham",
             "spam_probability": 0.1,

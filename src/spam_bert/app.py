@@ -6,6 +6,7 @@ What’s new:
 - --model-cache-dir lets you pick where hub models are stored
 - Auto snapshot_download to that folder on first use (no hidden ~/.cache surprises)
 - Honors local model directories for offline packaging
+- --no-chunk flag to disable chunking and classify with a single truncated pass
 """
 
 import argparse
@@ -16,8 +17,11 @@ import re
 import sys
 from functools import lru_cache
 from pathlib import Path
-from typing import Optional, Dict, Any, Tuple
+from typing import Optional, Dict, Any
+
+# Transformers / HF Hub
 from transformers import AutoTokenizer, AutoModelForSequenceClassification, pipeline
+from huggingface_hub import snapshot_download  # hf_hub_url not needed here
 
 # Email parsing
 from email import policy
@@ -29,9 +33,6 @@ try:
     from pydantic import BaseModel
 except ImportError:
     FastAPI = None  # CLI still works without REST deps
-
-from transformers import pipeline
-from huggingface_hub import snapshot_download, hf_hub_url  # snapshot_download used; hf_hub_url only to validate ids
 
 
 # ---------- Config ----------
@@ -177,9 +178,6 @@ def resolve_model_source(
     return name
 
 
-# --- 2) cached tokenizer & pipeline (no cache_dir arg threaded) ---
-from transformers import AutoTokenizer, AutoModelForSequenceClassification, pipeline
-
 @lru_cache(maxsize=8)
 def get_tokenizer(model_source: str):
     return AutoTokenizer.from_pretrained(model_source, use_fast=True)
@@ -190,61 +188,6 @@ def get_pipeline_cached(model_source: str):
     mdl = AutoModelForSequenceClassification.from_pretrained(model_source)
     return pipeline("text-classification", model=mdl, tokenizer=tok)
 
-def classify_text(
-    text: str,
-    model_name: Optional[str] = None,
-    threshold: float = DEFAULT_THRESHOLD,
-    local_model_dir: Optional[str] = None,
-    model_cache_dir: Optional[str] = None
-) -> Dict[str, Any]:
-
-    model_source = resolve_model_source(
-        model_name,
-        Path(local_model_dir) if local_model_dir else None,
-        Path(model_cache_dir) if model_cache_dir else None
-    )
-
-    tokenizer = get_tokenizer(model_source)
-    tokens = tokenizer.encode(text, add_special_tokens=False)
-
-    # Short text — no chunking needed
-    if len(tokens) <= CHUNK_SIZE:
-        result = get_pipeline_cached(model_source)(
-            text, truncation=True, max_length=CHUNK_SIZE
-        )[0]
-        spam_prob = _normalize_label_prob(result)
-        decision = "spam" if spam_prob >= threshold else "ham"
-        return {
-            "decision": decision,
-            "spam_probability": round(spam_prob, 6),
-            "threshold": threshold,
-            "chunks": 1,
-            "model_source": model_source,
-            "chars_analyzed": len(text),
-        }
-
-    # Long text — chunk
-    spam_probs = []
-    for start in range(0, len(tokens), CHUNK_SIZE - CHUNK_OVERLAP):
-        chunk_tokens = tokens[start:start+CHUNK_SIZE]
-        chunk_text = tokenizer.decode(chunk_tokens, skip_special_tokens=True)
-        result = get_pipeline_cached(model_source)(
-            chunk_text, truncation=True, max_length=CHUNK_SIZE
-        )[0]
-        spam_probs.append(_normalize_label_prob(result))
-
-    # Aggregate — max probability across chunks
-    final_prob = sum(spam_probs) / len(spam_probs)
-    decision = "spam" if final_prob >= threshold else "ham"
-
-    return {
-        "decision": decision,
-        "spam_probability": round(final_prob, 6),
-        "threshold": threshold,
-        "chunks": len(spam_probs),
-        "model_source": model_source,
-        "chars_analyzed": len(text),
-    }
 
 def _normalize_label_prob(result) -> float:
     """Normalize the model output to spam probability."""
@@ -258,12 +201,73 @@ def _normalize_label_prob(result) -> float:
         return score if "spam" in label else 1.0 - score
 
 
+def classify_text(
+    text: str,
+    model_name: Optional[str] = None,
+    threshold: float = DEFAULT_THRESHOLD,
+    local_model_dir: Optional[str] = None,
+    model_cache_dir: Optional[str] = None,
+    no_chunk: bool = False,  # <-- NEW
+) -> Dict[str, Any]:
+
+    model_source = resolve_model_source(
+        model_name,
+        Path(local_model_dir) if local_model_dir else None,
+        Path(model_cache_dir) if model_cache_dir else None
+    )
+
+    tokenizer = get_tokenizer(model_source)
+    tokens = tokenizer.encode(text, add_special_tokens=False)
+
+    # Either short text OR explicit no-chunk -> single inference with truncation
+    if no_chunk or len(tokens) <= CHUNK_SIZE:
+        result = get_pipeline_cached(model_source)(
+            text, truncation=True, max_length=CHUNK_SIZE
+        )[0]
+        spam_prob = _normalize_label_prob(result)
+        decision = "spam" if spam_prob >= threshold else "ham"
+        return {
+            "decision": decision,
+            "spam_probability": round(spam_prob, 6),
+            "threshold": threshold,
+            "chunks": 0 if no_chunk else 1,  # 0 indicates forced no-chunk
+            "model_source": model_source,
+            "chars_analyzed": len(text),
+            "no_chunk": bool(no_chunk),
+        }
+
+    # Long text — chunk
+    spam_probs = []
+    for start in range(0, len(tokens), CHUNK_SIZE - CHUNK_OVERLAP):
+        chunk_tokens = tokens[start:start+CHUNK_SIZE]
+        chunk_text = tokenizer.decode(chunk_tokens, skip_special_tokens=True)
+        result = get_pipeline_cached(model_source)(
+            chunk_text, truncation=True, max_length=CHUNK_SIZE
+        )[0]
+        spam_probs.append(_normalize_label_prob(result))
+
+    # Aggregate — average across chunks (current default)
+    final_prob = sum(spam_probs) / len(spam_probs)
+    decision = "spam" if final_prob >= threshold else "ham"
+
+    return {
+        "decision": decision,
+        "spam_probability": round(final_prob, 6),
+        "threshold": threshold,
+        "chunks": len(spam_probs),
+        "model_source": model_source,
+        "chars_analyzed": len(text),
+        "no_chunk": False,
+    }
+
+
 # ---------- REST Service ----------
 class ClassifyRequest(BaseModel):
     text: Optional[str] = None
     eml_base64: Optional[str] = None
     threshold: Optional[float] = None
     model: Optional[str] = None
+    no_chunk: Optional[bool] = None   # <-- NEW
 
 
 def create_app(
@@ -274,7 +278,7 @@ def create_app(
 ) -> FastAPI:
     if FastAPI is None:
         raise RuntimeError("FastAPI not installed. Install with `pip install fastapi uvicorn`.")
-    app = FastAPI(title="Spam Detector (BERT)", version="1.1.0")
+    app = FastAPI(title="Spam Detector (BERT)", version="1.2.0")
 
     @app.get("/health")
     def health():
@@ -282,7 +286,7 @@ def create_app(
 
     @app.get("/model")
     def model_info():
-        src, pipe_cache = resolve_model_source(
+        src = resolve_model_source(
             default_model,
             Path(local_dir) if local_dir else None,
             Path(model_cache_dir) if model_cache_dir else None
@@ -291,7 +295,6 @@ def create_app(
             "default_model": default_model,
             "resolved_source": src,
             "threshold": default_threshold,
-            "pipeline_cache_dir": pipe_cache
         }
 
     @app.post("/classify")
@@ -321,7 +324,8 @@ def create_app(
             model_name=req.model or default_model,
             threshold=req.threshold if req.threshold is not None else default_threshold,
             local_model_dir=local_dir,
-            model_cache_dir=model_cache_dir
+            model_cache_dir=model_cache_dir,
+            no_chunk=bool(req.no_chunk),  # <-- pass-through
         )
         return out
 
@@ -336,6 +340,7 @@ def main():
     ap.add_argument("--local-model-dir", default=None, help="Path to a local model directory (for offline use).")
     ap.add_argument("--model-cache-dir", default=None, help="Directory to store/download hub models (overrides default HF cache).")
     ap.add_argument("--threshold", type=float, default=DEFAULT_THRESHOLD, help=f"Spam threshold (default: {DEFAULT_THRESHOLD})")
+    ap.add_argument("--no-chunk", action="store_true", help="Disable chunking (truncate to model max length).")  # <-- NEW
     ap.add_argument("--pretty", action="store_true", help="Pretty-print JSON output.")
     ap.add_argument("--serve", action="store_true", help="Run as REST service.")
     ap.add_argument("--host", default="0.0.0.0", help="REST host (default: 0.0.0.0)")
@@ -370,7 +375,8 @@ def main():
             model_name=args.model,
             threshold=args.threshold,
             local_model_dir=args.local_model_dir,
-            model_cache_dir=args.model_cache_dir
+            model_cache_dir=args.model_cache_dir,
+            no_chunk=args.no_chunk,  # <-- NEW
         )
         print(json.dumps(out, indent=2 if args.pretty else None))
     except Exception as e:
