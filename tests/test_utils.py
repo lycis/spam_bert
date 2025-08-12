@@ -25,3 +25,4 @@ def test_is_hub_id_vs_path(tmp_path: Path):
 
 def test_sanitized_repo_dir():
     assert app.sanitized_repo_dir("org/model") == "org__model"
+

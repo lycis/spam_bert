@@ -35,3 +35,40 @@ def test_resolve_downloads_to_cache_when_requested(tmp_path: Path, monkeypatch):
     resolved = app.resolve_model_source("org/model", None, cache)
     assert Path(resolved).exists()
     assert called["repo_id"] == "org/model"
+
+def test_ensure_local_copy_downloads(monkeypatch, tmp_path):
+    calls = {"snap": 0}
+    def fake_snapshot_download(repo_id, local_dir, local_dir_use_symlinks):
+        calls["snap"] += 1
+        Path(local_dir).mkdir(parents=True, exist_ok=True)
+        (Path(local_dir)/"config.json").write_text("{}")
+    monkeypatch.setattr(app, "snapshot_download", fake_snapshot_download)
+
+    target = app.ensure_local_copy("org/model", tmp_path)
+    assert target.exists()
+    assert calls["snap"] == 1
+
+def test_ensure_local_copy_reuses(monkeypatch, tmp_path):
+    # pre-create directory with a file so it reuses and doesn't call snapshot_download
+    pre = tmp_path / app.sanitized_repo_dir("org/model")
+    pre.mkdir(parents=True, exist_ok=True)
+    (pre / "ok").write_text("x")
+
+    called = {"snap": 0}
+    def fake_snapshot_download(*a, **k): called["snap"] += 1
+    monkeypatch.setattr(app, "snapshot_download", fake_snapshot_download)
+
+    target = app.ensure_local_copy("org/model", tmp_path)
+    assert target == pre
+    assert called["snap"] == 0
+
+def test_resolve_model_uses_cache_when_hub_id(tmp_path, monkeypatch):
+    # point to empty cache; simulate download
+    def fake_ensure(repo_id, cache_root):
+        path = cache_root / app.sanitized_repo_dir(repo_id)
+        path.mkdir(parents=True, exist_ok=True)
+        (path / "config.json").write_text("{}")
+        return path
+    monkeypatch.setattr(app, "ensure_local_copy", fake_ensure)
+    resolved = app.resolve_model_source("org/model", None, tmp_path)
+    assert Path(resolved).exists()
