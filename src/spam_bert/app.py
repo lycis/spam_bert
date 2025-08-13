@@ -7,6 +7,8 @@ What’s new:
 - Auto snapshot_download to that folder on first use (no hidden ~/.cache surprises)
 - Honors local model directories for offline packaging
 - --no-chunk flag to disable chunking and classify with a single truncated pass
+- Aggregation strategies for chunked inference: mean, max, median, topk_mean, quantile,
+  length_weighted, position_decay, logit_mean, noisy_or, k_of_n, majority_vote
 """
 
 import argparse
@@ -15,9 +17,10 @@ import json
 import os
 import re
 import sys
+import math
 from functools import lru_cache
 from pathlib import Path
-from typing import Optional, Dict, Any
+from typing import Optional, Dict, Any, List
 
 # Transformers / HF Hub
 from transformers import AutoTokenizer, AutoModelForSequenceClassification, pipeline
@@ -36,13 +39,15 @@ except ImportError:
 
 
 # ---------- Config ----------
-DEFAULT_MODEL = "AntiSpamInstitute/spam-detector-bert-MoE-v2.2"
+# DEFAULT_MODEL = "AntiSpamInstitute/spam-detector-bert-MoE-v2.2"
+DEFAULT_MODEL = "mshenoda/roberta-spam"
 DEFAULT_THRESHOLD = 0.6
 # Fallback local dir (used if present and --local-model-dir not provided)
 DEFAULT_LOCAL_MODEL_DIR = Path(__file__).parent / "models" / "email-spam"
 
 CHUNK_SIZE = 512
 CHUNK_OVERLAP = 32  # tokens
+DEFAULT_AGGREGATION = "mean"
 
 
 # ---------- Utilities ----------
@@ -127,6 +132,92 @@ def sanitized_repo_dir(repo_id: str) -> str:
     return repo_id.replace("/", "__")
 
 
+# ---------- Aggregation helpers ----------
+def _safe_probs(probs: List[float], eps: float = 1e-6) -> List[float]:
+    return [min(max(p, eps), 1.0 - eps) for p in probs]
+
+
+def aggregate_probs(
+    probs: List[float],
+    method: str = DEFAULT_AGGREGATION,
+    *,
+    chunk_lengths: Optional[List[int]] = None,
+    k: int = 3,
+    p: float = 0.9,
+    per_chunk_thr: float = 0.7,
+    decay: float = 0.9
+) -> float:
+    """
+    Fuse chunk spam probabilities into a single spam probability.
+    Returns a float in [0,1].
+    Supported methods: mean, max, median, topk_mean, quantile,
+                       length_weighted, position_decay, logit_mean,
+                       noisy_or, k_of_n, majority_vote
+    """
+    if not probs:
+        return 0.0
+    probs = _safe_probs(probs)
+    n = len(probs)
+    m = (method or "mean").lower()
+
+    if m == "mean":
+        return sum(probs) / n
+
+    if m == "max":
+        return max(probs)
+
+    if m == "median":
+        s = sorted(probs)
+        return s[n // 2] if n % 2 == 1 else 0.5 * (s[n // 2 - 1] + s[n // 2])
+
+    if m == "topk_mean":
+        kk = max(1, min(k, n))
+        return sum(sorted(probs, reverse=True)[:kk]) / kk
+
+    if m == "quantile":
+        p = min(max(p, 0.0), 1.0)
+        idx = min(n - 1, max(0, int(round(p * (n - 1)))))
+        return sorted(probs)[idx]
+
+    if m == "length_weighted":
+        if not chunk_lengths or len(chunk_lengths) != n:
+            return sum(probs) / n
+        total = sum(chunk_lengths) or 1
+        return sum(p_i * L_i for p_i, L_i in zip(probs, chunk_lengths)) / total
+
+    if m == "position_decay":
+        decay = float(decay)
+        if decay <= 0.0 or decay > 1.0:
+            decay = 0.9
+        weights = [decay ** i for i in range(n)]
+        sw = sum(weights) or 1e-9
+        return sum(p_i * w for p_i, w in zip(probs, weights)) / sw
+
+    if m == "logit_mean":
+        logits = [math.log(p_i / (1 - p_i)) for p_i in probs]
+        avg_logit = sum(logits) / n
+        return 1 / (1 + math.exp(-avg_logit))
+
+    if m == "noisy_or":
+        prod_not = 1.0
+        for p_i in probs:
+            prod_not *= (1.0 - p_i)
+        return 1.0 - prod_not
+
+    if m == "k_of_n":
+        kk = max(1, min(k, n))
+        hits = sum(1 for p_i in probs if p_i >= per_chunk_thr)
+        # normalize: 0..1 based on required K
+        return min(1.0, max(0.0, hits / kk))
+
+    if m == "majority_vote":
+        votes = sum(1 for p_i in probs if p_i >= per_chunk_thr)
+        return votes / n
+
+    # default
+    return sum(probs) / n
+
+
 # ---------- Model / Inference ----------
 def ensure_local_copy(repo_id: str, cache_root: Path) -> Path:
     """
@@ -138,7 +229,6 @@ def ensure_local_copy(repo_id: str, cache_root: Path) -> Path:
         return target_dir
 
     target_dir.parent.mkdir(parents=True, exist_ok=True)
-    # Make a local copy (no symlinks), so we can ship or relocate
     snapshot_download(
         repo_id=repo_id,
         local_dir=str(target_dir),
@@ -207,7 +297,12 @@ def classify_text(
     threshold: float = DEFAULT_THRESHOLD,
     local_model_dir: Optional[str] = None,
     model_cache_dir: Optional[str] = None,
-    no_chunk: bool = False,  # <-- NEW
+    no_chunk: bool = False,             # disable chunking (single truncated pass)
+    aggregate: str = DEFAULT_AGGREGATION,  # aggregation method if chunking
+    topk: int = 3,
+    quantile: float = 0.9,
+    per_chunk_thr: float = 0.7,
+    decay: float = 0.9,
 ) -> Dict[str, Any]:
 
     model_source = resolve_model_source(
@@ -234,20 +329,34 @@ def classify_text(
             "model_source": model_source,
             "chars_analyzed": len(text),
             "no_chunk": bool(no_chunk),
+            "aggregation": None,
+            "aggregation_params": None,
         }
 
     # Long text — chunk
-    spam_probs = []
-    for start in range(0, len(tokens), CHUNK_SIZE - CHUNK_OVERLAP):
-        chunk_tokens = tokens[start:start+CHUNK_SIZE]
+    spam_probs: List[float] = []
+    chunk_lengths: List[int] = []
+    step = max(1, CHUNK_SIZE - CHUNK_OVERLAP)
+    for start in range(0, len(tokens), step):
+        chunk_tokens = tokens[start:start + CHUNK_SIZE]
+        if not chunk_tokens:
+            break
         chunk_text = tokenizer.decode(chunk_tokens, skip_special_tokens=True)
         result = get_pipeline_cached(model_source)(
             chunk_text, truncation=True, max_length=CHUNK_SIZE
         )[0]
         spam_probs.append(_normalize_label_prob(result))
+        chunk_lengths.append(len(chunk_tokens))
 
-    # Aggregate — average across chunks (current default)
-    final_prob = sum(spam_probs) / len(spam_probs)
+    final_prob = aggregate_probs(
+        spam_probs,
+        method=aggregate,
+        chunk_lengths=chunk_lengths,
+        k=topk,
+        p=quantile,
+        per_chunk_thr=per_chunk_thr,
+        decay=decay,
+    )
     decision = "spam" if final_prob >= threshold else "ham"
 
     return {
@@ -258,6 +367,13 @@ def classify_text(
         "model_source": model_source,
         "chars_analyzed": len(text),
         "no_chunk": False,
+        "aggregation": aggregate,
+        "aggregation_params": {
+            "topk": topk,
+            "quantile": quantile,
+            "per_chunk_thr": per_chunk_thr,
+            "decay": decay,
+        },
     }
 
 
@@ -267,7 +383,12 @@ class ClassifyRequest(BaseModel):
     eml_base64: Optional[str] = None
     threshold: Optional[float] = None
     model: Optional[str] = None
-    no_chunk: Optional[bool] = None   # <-- NEW
+    no_chunk: Optional[bool] = None
+    aggregate: Optional[str] = None
+    topk: Optional[int] = None
+    quantile: Optional[float] = None
+    per_chunk_thr: Optional[float] = None
+    decay: Optional[float] = None
 
 
 def create_app(
@@ -278,7 +399,7 @@ def create_app(
 ) -> FastAPI:
     if FastAPI is None:
         raise RuntimeError("FastAPI not installed. Install with `pip install fastapi uvicorn`.")
-    app = FastAPI(title="Spam Detector (BERT)", version="1.2.0")
+    app = FastAPI(title="Spam Detector (BERT)", version="1.3.0")
 
     @app.get("/health")
     def health():
@@ -295,6 +416,9 @@ def create_app(
             "default_model": default_model,
             "resolved_source": src,
             "threshold": default_threshold,
+            "chunk_size": CHUNK_SIZE,
+            "chunk_overlap": CHUNK_OVERLAP,
+            "default_aggregation": DEFAULT_AGGREGATION,
         }
 
     @app.post("/classify")
@@ -325,7 +449,12 @@ def create_app(
             threshold=req.threshold if req.threshold is not None else default_threshold,
             local_model_dir=local_dir,
             model_cache_dir=model_cache_dir,
-            no_chunk=bool(req.no_chunk),  # <-- pass-through
+            no_chunk=bool(req.no_chunk),
+            aggregate=(req.aggregate or DEFAULT_AGGREGATION),
+            topk=int(req.topk) if req.topk is not None else 3,
+            quantile=float(req.quantile) if req.quantile is not None else 0.9,
+            per_chunk_thr=float(req.per_chunk_thr) if req.per_chunk_thr is not None else 0.7,
+            decay=float(req.decay) if req.decay is not None else 0.9,
         )
         return out
 
@@ -340,7 +469,19 @@ def main():
     ap.add_argument("--local-model-dir", default=None, help="Path to a local model directory (for offline use).")
     ap.add_argument("--model-cache-dir", default=None, help="Directory to store/download hub models (overrides default HF cache).")
     ap.add_argument("--threshold", type=float, default=DEFAULT_THRESHOLD, help=f"Spam threshold (default: {DEFAULT_THRESHOLD})")
-    ap.add_argument("--no-chunk", action="store_true", help="Disable chunking (truncate to model max length).")  # <-- NEW
+
+    # Chunking & aggregation controls
+    ap.add_argument("--no-chunk", action="store_true", help="Disable chunking (truncate to model max length).")
+    ap.add_argument("--aggregate", choices=[
+        "mean","max","median","topk_mean","quantile",
+        "length_weighted","position_decay","logit_mean",
+        "noisy_or","k_of_n","majority_vote"
+    ], default=DEFAULT_AGGREGATION, help="Aggregation method for chunked inference.")
+    ap.add_argument("--topk", type=int, default=3, help="K for topk_mean / k_of_n aggregation.")
+    ap.add_argument("--quantile", type=float, default=0.9, help="Quantile (0..1) for quantile aggregation.")
+    ap.add_argument("--per-chunk-thr", type=float, default=0.7, help="Per-chunk threshold for vote/k_of_n.")
+    ap.add_argument("--decay", type=float, default=0.9, help="Decay factor (0<d<=1) for position_decay aggregation.")
+
     ap.add_argument("--pretty", action="store_true", help="Pretty-print JSON output.")
     ap.add_argument("--serve", action="store_true", help="Run as REST service.")
     ap.add_argument("--host", default="0.0.0.0", help="REST host (default: 0.0.0.0)")
@@ -376,7 +517,12 @@ def main():
             threshold=args.threshold,
             local_model_dir=args.local_model_dir,
             model_cache_dir=args.model_cache_dir,
-            no_chunk=args.no_chunk,  # <-- NEW
+            no_chunk=args.no_chunk,
+            aggregate=args.aggregate,
+            topk=args.topk,
+            quantile=args.quantile,
+            per_chunk_thr=args.per_chunk_thr,
+            decay=args.decay,
         )
         print(json.dumps(out, indent=2 if args.pretty else None))
     except Exception as e:
