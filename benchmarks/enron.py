@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 """
-Parallel Enron benchmark with pip-style progress (Rich), no duplicated lines.
+Parallel Enron benchmark with pip-style progress (Rich), supporting:
+- single run (chunked or --no-chunk)
+- --compare mode: runs both (chunked & no-chunk) and prints a side-by-side comparison
 
 CSV columns expected:
   [Index], Subject, Message, Spam/Ham, Date
@@ -35,10 +37,12 @@ except Exception:
 
 # ---------------- per-process state ----------------
 _WORKER_MODEL_SOURCE: str | None = None
+_WORKER_NO_CHUNK: bool = False
 
-def _worker_init(resolved_model_source: str):
-    global _WORKER_MODEL_SOURCE
+def _worker_init(resolved_model_source: str, no_chunk: bool):
+    global _WORKER_MODEL_SOURCE, _WORKER_NO_CHUNK
     _WORKER_MODEL_SOURCE = resolved_model_source
+    _WORKER_NO_CHUNK = bool(no_chunk)
     try:
         import torch
         torch.set_num_threads(1)
@@ -63,13 +67,13 @@ def _classify_chunk(chunk_rows, threshold: float, worker_id: int, q=None):
             threshold=threshold,
             local_model_dir=None,
             model_cache_dir=None,
+            no_chunk=_WORKER_NO_CHUNK,
         )
         y_pred = 1 if out["decision"] == "spam" else 0
         prob   = float(out["spam_probability"])
         out_rows.append((idx, y_true, y_pred, prob, out.get("chunks", 1), len(text)))
         if q is not None:
             q.put((worker_id, 1))  # tell main to advance this worker + overall
-    # signal worker finished (optional)
     if q is not None:
         q.put((worker_id, 0))
     return out_rows
@@ -83,11 +87,35 @@ def _make_progress():
         TaskProgressColumn(),
         MofNCompleteColumn(),
         TimeRemainingColumn(),
-        transient=True,  # hide progress after completion
+        transient=True,
         refresh_per_second=8,
     )
 
-def print_criteria(metrics: dict, thresholds: dict) -> bool:
+def _print_report(df: pd.DataFrame, rep_dict, roc, cm):
+    if RICH:
+        table = Table(title="Classification Report", box=box.SIMPLE)
+        table.add_column("Class"); table.add_column("Precision", justify="right")
+        table.add_column("Recall", justify="right"); table.add_column("F1", justify="right")
+        for cls in ("ham","spam"):
+            table.add_row(cls, f"{rep_dict[cls]['precision']:.4f}",
+                               f"{rep_dict[cls]['recall']:.4f}",
+                               f"{rep_dict[cls]['f1-score']:.4f}")
+        table.add_row("macro avg",
+                      f"{rep_dict['macro avg']['precision']:.4f}",
+                      f"{rep_dict['macro avg']['recall']:.4f}",
+                      f"{rep_dict['macro avg']['f1-score']:.4f}")
+        console.print(table)
+        console.print(f"ROC-AUC: [bold]{roc:.4f}[/bold]")
+        console.print(f"Confusion matrix:\n{cm}")
+    else:
+        print("\n=== Classification report ===")
+        print(f"ham   P={rep_dict['ham']['precision']:.4f} R={rep_dict['ham']['recall']:.4f} F1={rep_dict['ham']['f1-score']:.4f}")
+        print(f"spam  P={rep_dict['spam']['precision']:.4f} R={rep_dict['spam']['recall']:.4f} F1={rep_dict['spam']['f1-score']:.4f}")
+        print(f"macro F1 = {rep_dict['macro avg']['f1-score']:.4f}")
+        print(f"ROC-AUC: {roc:.4f}")
+        print("Confusion matrix:\n", cm)
+
+def _print_criteria(metrics: dict, thresholds: dict) -> bool:
     rows = [
         ("Macro F1",      metrics["macro_f1"],      thresholds["macro_f1"]),
         ("Spam Recall",   metrics["spam_recall"],   thresholds["spam_recall"]),
@@ -111,79 +139,60 @@ def print_criteria(metrics: dict, thresholds: dict) -> bool:
             print(f"{name:>14}: {val:.4f} | thr {thr:.4f} {'✅' if ok else '❌'}")
     return overall_ok
 
-def main():
-    ap = argparse.ArgumentParser(description="Parallel Enron benchmark (pip-style progress)")
-    ap.add_argument("--csv", required=True, help="Path to Enron CSV (Subject, Message, Spam/Ham, Date)")
-    ap.add_argument("--model", default="AntiSpamInstitute/spam-detector-bert-MoE-v2.2")
-    ap.add_argument("--local-model-dir", default=None)
-    ap.add_argument("--model-cache-dir", default=None)
-    ap.add_argument("--threshold", type=float, default=0.6)
-    ap.add_argument("--workers", type=int, default=max(1, (os.cpu_count() or 2) - 1))
-    ap.add_argument("--limit", type=int, default=0)
-    ap.add_argument("--out-csv", default="enron_predictions.csv")
-    ap.add_argument("--no-progress", action="store_true", help="Disable progress UI")
+def _print_comparison(metrics_chunked: dict, metrics_nochunk: dict):
+    def delta(a,b): return a-b
+    if RICH:
+        table = Table(title="Chunking vs No-chunk (higher is better)", box=box.SIMPLE_HEAVY)
+        table.add_column("Metric")
+        table.add_column("Chunked", justify="right")
+        table.add_column("No-chunk", justify="right")
+        table.add_column("Δ (no-chunk − chunked)", justify="right")
+        for key, label in [
+            ("macro_f1","Macro F1"),
+            ("spam_recall","Spam Recall"),
+            ("ham_precision","Ham Precision"),
+            ("roc_auc","ROC-AUC"),
+        ]:
+            a = metrics_chunked[key]; b = metrics_nochunk[key]; d = delta(b,a)
+            arrow = "↑" if d>0 else ("↓" if d<0 else "→")
+            if RICH:
+                table.add_row(label, f"{a:.4f}", f"{b:.4f}", f"{d:+.4f} {arrow}")
+        console.print(table)
+    else:
+        print("\n== Chunked vs No-chunk ==")
+        for key,label in [("macro_f1","Macro F1"),("spam_recall","Spam Recall"),("ham_precision","Ham Precision"),("roc_auc","ROC-AUC")]:
+            a = metrics_chunked[key]; b = metrics_nochunk[key]
+            d = b - a; arrow = "↑" if d>0 else ("↓" if d<0 else "→")
+            print(f"{label:>14}: chunked={a:.4f} | no-chunk={b:.4f} | Δ={d:+.4f} {arrow}")
 
-    # Criteria (tweak to taste)
-    ap.add_argument("--crit-macro-f1", type=float, default=0.94)
-    ap.add_argument("--crit-spam-recall", type=float, default=0.95)
-    ap.add_argument("--crit-ham-precision", type=float, default=0.98)
-    ap.add_argument("--crit-roc-auc", type=float, default=0.98)
-    ap.add_argument("--strict", action="store_true", help="Exit 1 if any criterion fails")
-    args = ap.parse_args()
-
-    df = pd.read_csv(args.csv)
-    if args.limit > 0:
-        df = df.iloc[:args.limit].copy()
-
-    # Resolve model once (and optionally pre-download)
-    local_dir = Path(args.local_model_dir) if args.local_model_dir else None
-    cache_dir = Path(args.model_cache_dir) if args.model_cache_dir else None
-    resolved = resolve_model_source(args.model, local_dir, cache_dir)
-
-    if cache_dir and os.path.isdir(resolved) is False and "/" in resolved:
-        target = cache_dir / resolved.replace("/", "__")
-        snapshot_download(repo_id=resolved, local_dir=str(target), local_dir_use_symlinks=False)
-        resolved = str(target)
-
+def _run_once(*, df: pd.DataFrame, resolved: str, threshold: float, workers: int,
+              out_csv: str, show_progress: bool, no_chunk: bool):
+    """Run one pass (chunked or no-chunk). Returns (metrics_dict, report_dict, roc, cm)."""
     rows_iter = list(df[["Subject", "Message", "Spam/Ham"]].iterrows())
-    if not rows_iter:
-        print("No rows to process."); sys.exit(2)
-
-    W = max(1, int(args.workers))
-    chunk_sz = ceil(len(rows_iter) / W)
+    W = max(1, int(workers))
+    chunk_sz = ceil(len(rows_iter) / W) if W>0 else len(rows_iter)
     chunks = [rows_iter[i:i+chunk_sz] for i in range(0, len(rows_iter), chunk_sz)]
-    # In case of more workers than rows
     chunks += [[]] * max(0, W - len(chunks))
 
     results = { "idx": [], "y_true": [], "y_pred": [], "spam_prob": [], "chunks": [], "text_len": [] }
 
-    use_progress = RICH and (not args.no_progress) and console.is_terminal
-
     with Manager() as mgr:
-        q = mgr.Queue(maxsize=1000) if use_progress else None
+        q = mgr.Queue(maxsize=1000) if show_progress else None
+        with ProcessPoolExecutor(max_workers=W, initializer=_worker_init, initargs=(resolved, no_chunk)) as ex:
+            futures = { ex.submit(_classify_chunk, chunks[wid], threshold, wid, q): wid for wid in range(W) }
 
-        with ProcessPoolExecutor(max_workers=W, initializer=_worker_init, initargs=(resolved,)) as ex:
-            futures = {
-                ex.submit(_classify_chunk, chunks[wid], args.threshold, wid, q): wid
-                for wid in range(W)
-            }
-
-            if use_progress:
+            if show_progress:
+                label = "No-chunk" if no_chunk else "Chunked"
                 with _make_progress() as progress:
-                    # Build tasks: one per worker + overall
-                    overall = progress.add_task("", label="Overall", total=len(rows_iter))
+                    overall = progress.add_task("", label=f"{label} • Overall", total=len(rows_iter))
                     worker_tasks = []
                     for wid in range(W):
                         total = len(chunks[wid])
                         worker_tasks.append(
-                            progress.add_task("", label=f"Worker {wid}", total=total if total > 0 else 1)
+                            progress.add_task("", label=f"{label} • Worker {wid}", total=total if total>0 else 1)
                         )
-
                     done_workers = 0
-                    done_rows = 0
-                    # Main UI loop: advance bars on queue messages while gathering results
                     while done_workers < W:
-                        # drain progress updates
                         drained = False
                         while q is not None:
                             try:
@@ -192,16 +201,12 @@ def main():
                                 if inc > 0:
                                     progress.advance(worker_tasks[wid], inc)
                                     progress.advance(overall, inc)
-                                    done_rows += inc
                                 else:
-                                    # worker sent 'done' signal
                                     pass
                             except Exception:
                                 break
-                        # collect any completed futures non-blocking
                         for fut in list(f for f in futures if futures[f] is not None and f.done()):
-                            wid = futures[fut]
-                            futures[fut] = None  # mark consumed
+                            wid = futures[fut]; futures[fut] = None
                             try:
                                 for idx, y_true, y_pred, prob, ch, tlen in fut.result():
                                     results["idx"].append(idx)
@@ -212,10 +217,8 @@ def main():
                                     results["text_len"].append(tlen)
                             finally:
                                 done_workers += 1
-                        # small sleep to reduce CPU when idle
-                        time.sleep(0.05 if not drained else 0.0)
+                        time.sleep(0.03 if not drained else 0.0)
             else:
-                # no progress UI; just collect
                 for fut in as_completed(futures):
                     for idx, y_true, y_pred, prob, ch, tlen in fut.result():
                         results["idx"].append(idx)
@@ -225,7 +228,6 @@ def main():
                         results["chunks"].append(ch)
                         results["text_len"].append(tlen)
 
-    # Reassemble & save
     out_df = pd.DataFrame(results).sort_values("idx")
     out = df.copy()
     out["y_true"] = out_df["y_true"].values
@@ -233,9 +235,8 @@ def main():
     out["spam_prob"] = out_df["spam_prob"].values
     out["chunks"] = out_df["chunks"].values
     out["text_len"] = out_df["text_len"].values
-    out.to_csv(args.out_csv, index=False)
+    out.to_csv(out_csv, index=False)
 
-    # Metrics
     y_true = out["y_true"].tolist()
     y_pred = out["y_pred"].tolist()
     probs  = out["spam_prob"].tolist()
@@ -250,39 +251,107 @@ def main():
         roc = float("nan")
     cm = confusion_matrix(y_true, y_pred)
 
-    # Pretty report
-    if RICH:
-        table = Table(title="Classification Report", box=box.SIMPLE)
-        table.add_column("Class"); table.add_column("Precision", justify="right")
-        table.add_column("Recall", justify="right"); table.add_column("F1", justify="right")
-        for cls in ("ham","spam"):
-            table.add_row(cls, f"{rep[cls]['precision']:.4f}", f"{rep[cls]['recall']:.4f}", f"{rep[cls]['f1-score']:.4f}")
-        table.add_row("macro avg", f"{rep['macro avg']['precision']:.4f}", f"{rep['macro avg']['recall']:.4f}", f"{rep['macro avg']['f1-score']:.4f}")
-        console.print(table)
-        console.print(f"ROC-AUC: [bold]{roc:.4f}[/bold]")
-        console.print(f"Confusion matrix:\n{cm}")
-    else:
-        print("\n=== Classification report ===")
-        print(f"ham   P={rep['ham']['precision']:.4f} R={rep['ham']['recall']:.4f} F1={rep['ham']['f1-score']:.4f}")
-        print(f"spam  P={rep['spam']['precision']:.4f} R={rep['spam']['recall']:.4f} F1={rep['spam']['f1-score']:.4f}")
-        print(f"macro F1 = {macro_f1:.4f}")
-        print(f"ROC-AUC: {roc:.4f}")
-        print("Confusion matrix:\n", cm)
-
-    # Criteria
-    thresholds = {
-        "macro_f1": args.crit_macro_f1,
-        "spam_recall": args.crit_spam_recall,
-        "ham_precision": args.crit_ham_precision,
-        "roc_auc": args.crit_roc_auc,
-    }
     metrics = {
         "macro_f1": macro_f1,
         "spam_recall": spam_recall,
         "ham_precision": ham_precision,
         "roc_auc": roc,
     }
-    ok = print_criteria(metrics, thresholds)
+    return metrics, rep, roc, cm
+
+def main():
+    ap = argparse.ArgumentParser(description="Parallel Enron benchmark (pip-style progress) with compare mode")
+    ap.add_argument("--csv", required=True, help="Path to Enron CSV (Subject, Message, Spam/Ham, Date)")
+    ap.add_argument("--model", default="AntiSpamInstitute/spam-detector-bert-MoE-v2.2")
+    ap.add_argument("--local-model-dir", default=None)
+    ap.add_argument("--model-cache-dir", default=None)
+    ap.add_argument("--threshold", type=float, default=0.6)
+    ap.add_argument("--workers", type=int, default=max(1, (os.cpu_count() or 2) - 1))
+    ap.add_argument("--limit", type=int, default=0)
+    ap.add_argument("--out-csv", default="enron_predictions.csv")
+    ap.add_argument("--no-progress", action="store_true", help="Disable progress UI")
+    ap.add_argument("--no-chunk", action="store_true", help="Run only no-chunk (truncate) mode")
+    ap.add_argument("--compare", action="store_true", help="Run both: chunked then no-chunk and compare")
+
+    # Criteria (tweak to taste)
+    ap.add_argument("--crit-macro-f1", type=float, default=0.94)
+    ap.add_argument("--crit-spam-recall", type=float, default=0.95)
+    ap.add_argument("--crit-ham-precision", type=float, default=0.98)
+    ap.add_argument("--crit-roc-auc", type=float, default=0.98)
+    ap.add_argument("--strict", action="store_true", help="Exit 1 if any criterion fails (applies to final run or comparison)")
+    args = ap.parse_args()
+
+    df = pd.read_csv(args.csv)
+    if args.limit > 0:
+        df = df.iloc[:args.limit].copy()
+    if df.empty:
+        print("No rows to process."); sys.exit(2)
+
+    # Resolve model once (and optionally pre-download)
+    local_dir = Path(args.local_model_dir) if args.local_model_dir else None
+    cache_dir = Path(args.model_cache_dir) if args.model_cache_dir else None
+    resolved = resolve_model_source(args.model, local_dir, cache_dir)
+    if cache_dir and os.path.isdir(resolved) is False and "/" in resolved:
+        target = cache_dir / resolved.replace("/", "__")
+        snapshot_download(repo_id=resolved, local_dir=str(target), local_dir_use_symlinks=False)
+        resolved = str(target)
+
+    show_progress = RICH and (not args.no_progress) and console.is_terminal
+
+    if args.compare:
+        # 1) chunked
+        m_chunk, rep_chunk, roc_chunk, cm_chunk = _run_once(
+            df=df, resolved=resolved, threshold=args.threshold, workers=args.workers,
+            out_csv=args.out_csv.replace(".csv", "_chunked.csv"), show_progress=show_progress, no_chunk=False
+        )
+        if RICH: console.rule("[bold]Chunked results[/bold]")
+        _print_report(df, rep_chunk, roc_chunk, cm_chunk)
+
+        # 2) no-chunk
+        m_no, rep_no, roc_no, cm_no = _run_once(
+            df=df, resolved=resolved, threshold=args.threshold, workers=args.workers,
+            out_csv=args.out_csv.replace(".csv", "_nochunk.csv"), show_progress=show_progress, no_chunk=True
+        )
+        if RICH: console.rule("[bold]No-chunk results[/bold]")
+        _print_report(df, rep_no, roc_no, cm_no)
+
+        # Comparison
+        _print_comparison(m_chunk, m_no)
+
+        # Criteria: by default apply to chunked (baseline). Adjust if you prefer best-of-two.
+        thresholds = {
+            "macro_f1": args.crit_macro_f1,
+            "spam_recall": args.crit_spam_recall,
+            "ham_precision": args.crit_ham_precision,
+            "roc_auc": args.crit_roc_auc,
+        }
+        ok = _print_criteria(m_chunk, thresholds)
+        if args.strict and not ok:
+            if RICH: console.print("[bold red]❌ Benchmark (chunked) did not meet acceptance criteria (--strict).[/bold red]")
+            else:    print("❌ Benchmark (chunked) did not meet acceptance criteria (--strict).")
+            sys.exit(1)
+        else:
+            if RICH: console.print("[bold green]✅ Benchmark criteria satisfied for chunked run.[/bold green]")
+            else:    print("✅ Benchmark criteria satisfied for chunked run.")
+        return
+
+    # Single run: either chunked (default) or no-chunk if flag set
+    no_chunk = bool(args.no_chunk)
+    mode_name = "No-chunk" if no_chunk else "Chunked"
+    m, rep, roc, cm = _run_once(
+        df=df, resolved=resolved, threshold=args.threshold, workers=args.workers,
+        out_csv=args.out_csv, show_progress=show_progress, no_chunk=no_chunk
+    )
+    if RICH: console.rule(f"[bold]{mode_name} results[/bold]")
+    _print_report(df, rep, roc, cm)
+
+    thresholds = {
+        "macro_f1": args.crit_macro_f1,
+        "spam_recall": args.crit_spam_recall,
+        "ham_precision": args.crit_ham_precision,
+        "roc_auc": args.crit_roc_auc,
+    }
+    ok = _print_criteria(m, thresholds)
     if args.strict and not ok:
         if RICH: console.print("[bold red]❌ Benchmark did not meet acceptance criteria (--strict).[/bold red]")
         else:    print("❌ Benchmark did not meet acceptance criteria (--strict).")
