@@ -73,3 +73,5 @@ coverage.xml
 .pyre/
 
 **/*.egg-info/
+
+models/
