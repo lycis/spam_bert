@@ -1,6 +1,6 @@
 """Spam BERT Detector package: re-export public API for tests/imports."""
 
-__version__ = "0.1.0"
+__version__ = "0.1.2"
 
 # Re-export everything the tests use from the implementation module
 from .app import (  # type: ignore F401
