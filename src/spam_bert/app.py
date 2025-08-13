@@ -40,7 +40,8 @@ except ImportError:
 
 # ---------- Config ----------
 # DEFAULT_MODEL = "AntiSpamInstitute/spam-detector-bert-MoE-v2.2"
-DEFAULT_MODEL = "mshenoda/roberta-spam"
+#DEFAULT_MODEL = "mshenoda/roberta-spam"
+DEFAULT_MODEL = "prancyFox/tiny-bert-enron-spam"
 DEFAULT_THRESHOLD = 0.6
 # Fallback local dir (used if present and --local-model-dir not provided)
 DEFAULT_LOCAL_MODEL_DIR = Path(__file__).parent / "models" / "email-spam"

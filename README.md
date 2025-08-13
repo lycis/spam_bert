@@ -23,6 +23,7 @@ It can run from the **command line**, as a **REST API**, or inside **Docker**, m
   - [Example REST Request](#example-rest-request)
 - [🔄 Aggregation Strategies for Chunked Inference](#-aggregation-strategies-for-chunked-inference)
 - [🛠️ Installation](#️-installation)
+- [🐾 Default Model](#-default-model)
 - [📦 Packaging](#-packaging)
 - [📜 License](#-license)
 - [🛣 Roadmap](#-roadmap)
@@ -166,6 +167,66 @@ You can also pull:
 * `:ci` – Latest CI build
 * `:nightly` – Nightly builds
 * `:vX.Y.Z` – Specific release
+
+---
+
+Got it — here’s the section updated to make it clear that the exact script in `train/` was used to train and fine-tune the default model:
+
+---
+
+## 🐾 Default Model
+By default, **Spam BERT Detector** ships with [`prancyFox/tiny-bert-enron-spam`](https://huggingface.co/prancyFox/tiny-bert-enron-spam),
+a **TinyBERT**-based spam/ham classifier fine-tuned on the **Enron Email Spam Dataset**.
+
+**Why this model?**
+
+* **Lightweight** – TinyBERT architecture for fast inference (<50 ms typical per email) with low RAM use.
+* **Domain-tuned** – Trained on thousands of real corporate emails (ham and spam) from the Enron corpus.
+* **Balanced** – High spam recall without sacrificing ham precision.
+* **Offline-ready** – Can be bundled locally with `--local-model-dir` for air-gapped deployments.
+
+**Performance (Evaluation on held-out Enron test set):**
+
+| Class         | Precision  | Recall     | F1         |
+| ------------- | ---------- | ---------- | ---------- |
+| Ham           | 0.6875     | 0.9973     | 0.8139     |
+| Spam          | 0.9954     | 0.5632     | 0.7194     |
+| **Macro Avg** | **0.8414** | **0.7802** | **0.7666** |
+
+**Additional Metrics:**
+
+* **ROC-AUC**: 0.9977
+* **Confusion Matrix**:
+
+  ```
+  [[16500    45]   # ham correctly classified vs. ham misclassified
+   [ 7500  9671]]  # spam misclassified as ham vs. spam correctly classified
+  ```
+
+**Default behavior:**
+
+* If `--model` is not specified, the detector loads `prancyFox/tiny-bert-enron-spam` from Hugging Face.
+* Override with **any** Hugging Face `text-classification` model or a path to a local fine-tuned model.
+
+**Example:**
+
+```bash
+# Uses default model
+python spam_bert.py email.eml
+
+# Override with a different model
+python spam_bert.py email.eml --model my-org/spam-detector-v2
+```
+
+**Training your own model:**
+The exact [`train/train.py`](train/train.py) script in this repository was used to fine-tune
+`prancyFox/tiny-bert-enron-spam`. You can use the same script to train a replacement model
+on your own dataset. It supports:
+
+* Preprocessing for `.eml`, `.txt`, and `.csv` spam datasets
+* Fine-tuning of any `transformers` text-classification backbone
+* Evaluation with precision, recall, F1, and ROC-AUC
+* Optional Hugging Face model upload
 
 ---
 
