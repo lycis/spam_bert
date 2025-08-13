@@ -16,6 +16,19 @@ It can run from the **command line**, as a **REST API**, or inside **Docker**, m
 
 ---
 
+## 📚 Table of Contents
+- [✨ Key Features](#-key-features)
+- [🚀 CLI Usage](#-cli-usage)
+- [📡 REST API Mode](#-rest-api-mode)
+  - [Example REST Request](#example-rest-request)
+- [🔄 Aggregation Strategies for Chunked Inference](#-aggregation-strategies-for-chunked-inference)
+- [🛠️ Installation](#️-installation)
+- [📦 Packaging](#-packaging)
+- [📜 License](#-license)
+- [🛣 Roadmap](#-roadmap)
+
+---
+
 ## ✨ Key Features
 
 * **Model flexibility** – Use any Hugging Face `text-classification` model or a local fine-tuned model.
