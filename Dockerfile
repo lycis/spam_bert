@@ -1,47 +1,54 @@
 # syntax=docker/dockerfile:1.7
 FROM python:3.11-slim AS app
 
+# ---- Speed & reproducibility knobs
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
-    PIP_NO_CACHE_DIR=1
+    PIP_NO_CACHE_DIR=1 \
+    PIP_DISABLE_PIP_VERSION_CHECK=1
 
-# System deps
+# System deps kept minimal (no compilers if we can avoid source builds)
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    build-essential curl && \
-    rm -rf /var/lib/apt/lists/*
+      curl ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
 
-# ----- Install Python deps first (better layer cache)
-COPY requirements.txt ./
-# Ensure uvicorn is present for --serve mode
-RUN pip install --upgrade pip && pip install -r requirements.txt uvicorn[standard]
+# ---- Copy only requirement files for better layer caching
+COPY requirements.txt requirements-dev.txt* ./
 
-# ----- Copy package (src-layout) and metadata
+# ---- Install PyTorch CPU wheels explicitly (super fast, no CUDA)
+# Pin or pass via build args if you want stricter control
+ARG TORCH_VERSION=2.3.1
+ARG TORCH_INDEX_URL=https://download.pytorch.org/whl/cpu
+
+# Use BuildKit pip cache; prefer binary wheels for everything
+RUN --mount=type=cache,target=/root/.cache/pip \
+    python -m pip install --upgrade pip \
+ && pip install --prefer-binary --index-url ${TORCH_INDEX_URL} torch==${TORCH_VERSION} \
+ && pip install --prefer-binary -r requirements.txt uvicorn[standard]
+
+# ---- Copy package (src layout) and metadata
 COPY pyproject.toml setup.cfg README.md LICENSE* ./
 COPY src ./src
 
-# Install package into image (editable not needed in container, but fine)
-RUN pip install --no-deps -e .
+# ---- Build a wheel, then install the wheel (faster than editable)
+RUN --mount=type=cache,target=/root/.cache/pip \
+    pip wheel --no-deps -w dist . \
+ && pip install --no-deps dist/*.whl
 
-# ----- Entry point wrapper
+# ---- Entrypoint wrapper
 COPY docker/entrypoint.sh /app/entrypoint.sh
 RUN chmod +x /app/entrypoint.sh
 
-# ----- Non-root user
+# ---- Non-root
 RUN useradd -ms /bin/bash appuser
 USER appuser
 
-# Expose API port
 EXPOSE 8000
 
-# Prefer HF_HOME (Transformers v5+). Mount this to persist models.
+# Prefer HF_HOME; models will cache under $HF_HOME/hub at runtime
 ENV HF_HOME=/tmp/hf_home
 
-# Default: serve API on 0.0.0.0:8000
-# You can override model via:
-#   - env: SPAMBERT_MODEL=prancyFox/tiny-bert-enron-spam
-#   - env: SPAMBERT_LOCAL_MODEL_DIR=/models/tiny  (for offline)
-# Or pass flags at runtime:  --model ...  --no-chunk  --threshold 0.55  etc.
 ENTRYPOINT ["/bin/sh", "/app/entrypoint.sh"]
 CMD ["--serve", "--host", "0.0.0.0", "--port", "8000"]
