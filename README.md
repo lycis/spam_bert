@@ -171,6 +171,32 @@ docker run -p 9000:9000 ghcr.io/lycis/spam_bert:latest \
 docker run -p 8000:8000 -v /path/to/local_model:/models ghcr.io/lycis/spam_bert:latest \
   --serve --local-model-dir /models
 
+### Run with Environment Variables
+
+Instead of passing parameters every time, you can set them via `-e` when running the container.
+
+| Environment Variable | Equivalent CLI Option | Description                                                       |
+| -------------------- | --------------------- | ----------------------------------------------------------------- |
+| `MODEL`              | `--model`             | Hugging Face model ID or path to a local model directory.         |
+| `LOCAL_MODEL_DIR`    | `--local-model-dir`   | Path to a pre-downloaded model for offline use.                   |
+| `MODEL_CACHE_DIR`    | `--model-cache-dir`   | Directory for Hugging Face model cache (can be a mounted volume). |
+| `THRESHOLD`          | `--threshold`         | Spam probability threshold. Default: `0.6`.                       |
+| `AGGREGATION`        | `--aggregation`       | Aggregation method for chunked inference.                         |
+| `TOPK`               | `--topk`              | Top-K value for aggregation methods that support it.              |
+| `PER_CHUNK_THR`      | `--per-chunk-thr`     | Per-chunk spam threshold.                                         |
+| `HOST`               | `--host`              | REST API host. Default: `0.0.0.0`.                                |
+| `PORT`               | `--port`              | REST API port. Default: `8000`.                                   |
+
+**Example:**
+
+```bash
+docker run -p 9000:9000 \
+  -e MODEL=AntiSpamInstitute/spam-detector-bert-MoE-v2.2 \
+  -e THRESHOLD=0.7 \
+  ghcr.io/lycis/spam_bert:latest --serve
+```
+
+> CLI arguments override environment variables if both are provided.
 
 ### Key points
 --model can be any Hugging Face model ID or a path inside the container (mounted via -v).
