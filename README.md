@@ -175,28 +175,52 @@ docker run -p 8000:8000 -v /path/to/local_model:/models ghcr.io/lycis/spam_bert:
 
 Instead of passing parameters every time, you can set them via `-e` when running the container.
 
-| Environment Variable | Equivalent CLI Option | Description                                                       |
-| -------------------- | --------------------- | ----------------------------------------------------------------- |
-| `MODEL`              | `--model`             | Hugging Face model ID or path to a local model directory.         |
-| `LOCAL_MODEL_DIR`    | `--local-model-dir`   | Path to a pre-downloaded model for offline use.                   |
-| `MODEL_CACHE_DIR`    | `--model-cache-dir`   | Directory for Hugging Face model cache (can be a mounted volume). |
-| `THRESHOLD`          | `--threshold`         | Spam probability threshold. Default: `0.6`.                       |
-| `AGGREGATION`        | `--aggregation`       | Aggregation method for chunked inference.                         |
-| `TOPK`               | `--topk`              | Top-K value for aggregation methods that support it.              |
-| `PER_CHUNK_THR`      | `--per-chunk-thr`     | Per-chunk spam threshold.                                         |
-| `HOST`               | `--host`              | REST API host. Default: `0.0.0.0`.                                |
-| `PORT`               | `--port`              | REST API port. Default: `8000`.                                   |
+| Environment Variable       | Equivalent CLI Option | Description                                                    |
+| -------------------------- | --------------------- | -------------------------------------------------------------- |
+| `SPAMBERT_MODEL`           | `--model`             | HF model ID (e.g., `prancyFox/tiny-bert-enron-spam`).          |
+| `SPAMBERT_LOCAL_MODEL_DIR` | `--local-model-dir`   | Path to a mounted local model for offline use.                 |
+| `SPAMBERT_MODEL_CACHE_DIR` | `--model-cache-dir`   | Directory for HF snapshots (mount a volume to persist).        |
+| `SPAMBERT_THRESHOLD`       | `--threshold`         | Global spam threshold (e.g., `0.6`).                           |
+| `SPAMBERT_NO_CHUNK`        | `--no-chunk`          | Set to `1/true/yes` to disable chunking.                       |
+| `SPAMBERT_AGGREGATION`     | `--aggregation`       | Aggregation method (e.g., `mean`, `noisy_or`, `topk_mean`, …). |
+| `SPAMBERT_TOPK`            | `--topk`              | K for `topk_mean` and `k_of_n`.                                |
+| `SPAMBERT_PER_CHUNK_THR`   | `--per-chunk-thr`     | Per-chunk spam threshold for vote-based methods.               |
+| `SPAMBERT_DECAY`           | `--decay`             | Position decay factor for `position_decay`.                    |
+| `SPAMBERT_HOST`            | `--host`              | API host (default `0.0.0.0`).                                  |
+| `SPAMBERT_PORT`            | `--port`              | API port (default `8000`).                                     |
+| `HF_HOME`                  | *(cache root)*        | Preferred HF cache root (models under `$HF_HOME/hub`).         |
 
-**Example:**
+### Example runs
 
+#### Custom model via env (clean docker-compose)
 ```bash
-docker run -p 9000:9000 \
-  -e MODEL=AntiSpamInstitute/spam-detector-bert-MoE-v2.2 \
-  -e THRESHOLD=0.7 \
-  ghcr.io/lycis/spam_bert:latest --serve
+docker run --rm -p 8000:8000 \
+  -e SPAMBERT_MODEL=prancyFox/tiny-bert-enron-spam \
+  -e HF_HOME=/hf_cache \
+  -v $(pwd)/models_cache:/hf_cache \
+  ghcr.io/lycis/spam_bert:latest
+```` 
+
+#### Offline local model + persistent cache
+```bash
+docker run --rm -p 8000:8000 \
+  -e SPAMBERT_LOCAL_MODEL_DIR=/models/tiny \
+  -e HF_HOME=/hf_cache \
+  -v $(pwd)/models/tiny-bert-enron-spam:/models/tiny \
+  -v $(pwd)/models_cache:/hf_cache \
+  ghcr.io/lycis/spam_bert:latest
 ```
 
-> CLI arguments override environment variables if both are provided.
+#### Tune behavior (aggregation & thresholds)
+``bash
+docker run --rm -p 9000:9000 \
+  -e SPAMBERT_MODEL=prancyFox/tiny-bert-enron-spam \
+  -e SPAMBERT_AGGREGATION=noisy_or \
+  -e SPAMBERT_PER_CHUNK_THR=0.7 \
+  -e SPAMBERT_THRESHOLD=0.6 \
+  -e SPAMBERT_PORT=9000 \
+  ghcr.io/lycis/spam_bert:latest --serve
+```
 
 ### Key points
 --model can be any Hugging Face model ID or a path inside the container (mounted via -v).
