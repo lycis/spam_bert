@@ -22,7 +22,8 @@ It can run from the **command line**, as a **REST API**, or inside **Docker**, m
 - [📡 REST API Mode](#-rest-api-mode)
   - [Example REST Request](#example-rest-request)
 - [🔄 Aggregation Strategies for Chunked Inference](#-aggregation-strategies-for-chunked-inference)
-- [🛠️ Installation](#️-installation)
+- [🛠️ Installation from source](#install-from-source)
+- [🐳 Docker Usage](#-docker-usage)
 - [🐾 Default Model](#-default-model)
 - [📦 Packaging](#-packaging)
 - [📜 License](#-license)
@@ -147,32 +148,38 @@ This reads the email, splits it into chunks, takes the top 5 spam scores, averag
 and decides “spam” if the final score exceeds the global threshold.
 ---
 
-## 🛠️ Installation
-
-### From source
+## Install from source
 
 ```bash
 pip install -r requirements.txt
 pip install -e .
 ```
 
-### From Docker
+## 🐳 Docker Usage
 
-```bash
+You can run Spam BERT Detector fully containerized. The container supports the same CLI and REST API parameters as the local installation — including selecting a specific model at runtime.
+
+### Run default model on port 8000
 docker run -p 8000:8000 ghcr.io/lycis/spam_bert:latest
-```
 
-You can also pull:
+### Run REST API with a custom Hugging Face model
+docker run -p 9000:9000 ghcr.io/lycis/spam_bert:latest \
+  --serve --host 0.0.0.0 --port 9000 \
+  --model AntiSpamInstitute/spam-detector-bert-MoE-v2.2
 
-* `:ci` – Latest CI build
-* `:nightly` – Nightly builds
-* `:vX.Y.Z` – Specific release
+### Run offline with a local fine-tuned model
+docker run -p 8000:8000 -v /path/to/local_model:/models ghcr.io/lycis/spam_bert:latest \
+  --serve --local-model-dir /models
 
----
 
-Got it — here’s the section updated to make it clear that the exact script in `train/` was used to train and fine-tune the default model:
+### Key points
+--model can be any Hugging Face model ID or a path inside the container (mounted via -v).
+--local-model-dir loads a pre-downloaded model without internet access.
+--model-cache-dir changes where HF stores downloads (e.g., to a persistent volume).
 
----
+The same arguments apply whether running CLI mode or API mode in Docker.
+
+Note: The default model (prancyFox/tiny-bert-enron-spam) was trained using the train/train.py script in this repository. You can fine-tune your own model with that script and mount it into the container.
 
 ## 🐾 Default Model
 By default, **Spam BERT Detector** ships with [`prancyFox/tiny-bert-enron-spam`](https://huggingface.co/prancyFox/tiny-bert-enron-spam),
