@@ -36,7 +36,7 @@ if [ -n "${SPAMBERT_NO_CHUNK}" ]; then
 fi
 
 if [ -n "${SPAMBERT_AGGREGATION}" ]; then
-  EXTRA_ARGS="$EXTRA_ARGS --aggregation ${SPAMBERT_AGGREGATION}"
+  EXTRA_ARGS="$EXTRA_ARGS --aggregate ${SPAMBERT_AGGREGATION}"
 fi
 
 if [ -n "${SPAMBERT_TOPK}" ]; then
