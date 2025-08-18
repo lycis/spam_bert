@@ -9,6 +9,10 @@ What’s new:
 - --no-chunk flag to disable chunking and classify with a single truncated pass
 - Aggregation strategies for chunked inference: mean, max, median, topk_mean, quantile,
   length_weighted, position_decay, logit_mean, noisy_or, k_of_n, majority_vote
+
+Concurrency fix:
+- Avoid sharing a Fast tokenizer across threads (Rust “Already borrowed”).
+- We now cache only the model; tokenizer is created per request.
 """
 
 import argparse
@@ -39,8 +43,6 @@ except ImportError:
 
 
 # ---------- Config ----------
-# DEFAULT_MODEL = "AntiSpamInstitute/spam-detector-bert-MoE-v2.2"
-#DEFAULT_MODEL = "mshenoda/roberta-spam"
 DEFAULT_MODEL = "prancyFox/tiny-bert-enron-spam"
 DEFAULT_THRESHOLD = 0.6
 # Fallback local dir (used if present and --local-model-dir not provided)
@@ -49,6 +51,9 @@ DEFAULT_LOCAL_MODEL_DIR = Path(__file__).parent / "models" / "email-spam"
 CHUNK_SIZE = 512
 CHUNK_OVERLAP = 32  # tokens
 DEFAULT_AGGREGATION = "mean"
+
+# Allow forcing slow (Python) tokenizer if desired
+USE_SLOW_TOKENIZER = os.getenv("SPAMBERT_USE_SLOW_TOKENIZER", "0").strip() in {"1", "true", "yes"}
 
 
 # ---------- Utilities ----------
@@ -270,13 +275,18 @@ def resolve_model_source(
 
 
 @lru_cache(maxsize=8)
-def get_tokenizer(model_source: str):
-    return AutoTokenizer.from_pretrained(model_source, use_fast=True)
+def get_model_cached(model_source: str):
+    # Only cache the model (thread-safe). Do NOT cache Fast tokenizer.
+    return AutoModelForSequenceClassification.from_pretrained(model_source)
 
-@lru_cache(maxsize=8)
-def get_pipeline_cached(model_source: str):
-    tok = get_tokenizer(model_source)
-    mdl = AutoModelForSequenceClassification.from_pretrained(model_source)
+
+def make_classifier(model_source: str):
+    """
+    Build a short-lived pipeline using a fresh tokenizer to avoid
+    Rust tokenizers' concurrency issues ("Already borrowed").
+    """
+    tok = AutoTokenizer.from_pretrained(model_source, use_fast=not USE_SLOW_TOKENIZER)
+    mdl = get_model_cached(model_source)
     return pipeline("text-classification", model=mdl, tokenizer=tok)
 
 
@@ -312,14 +322,15 @@ def classify_text(
         Path(model_cache_dir) if model_cache_dir else None
     )
 
-    tokenizer = get_tokenizer(model_source)
+    # Fresh tokenizer per request; cached model under the hood.
+    clf = make_classifier(model_source)
+    tokenizer = clf.tokenizer
+
     tokens = tokenizer.encode(text, add_special_tokens=False)
 
     # Either short text OR explicit no-chunk -> single inference with truncation
     if no_chunk or len(tokens) <= CHUNK_SIZE:
-        result = get_pipeline_cached(model_source)(
-            text, truncation=True, max_length=CHUNK_SIZE
-        )[0]
+        result = clf(text, truncation=True, max_length=CHUNK_SIZE)[0]
         spam_prob = _normalize_label_prob(result)
         decision = "spam" if spam_prob >= threshold else "ham"
         return {
@@ -343,9 +354,7 @@ def classify_text(
         if not chunk_tokens:
             break
         chunk_text = tokenizer.decode(chunk_tokens, skip_special_tokens=True)
-        result = get_pipeline_cached(model_source)(
-            chunk_text, truncation=True, max_length=CHUNK_SIZE
-        )[0]
+        result = clf(chunk_text, truncation=True, max_length=CHUNK_SIZE)[0]
         spam_probs.append(_normalize_label_prob(result))
         chunk_lengths.append(len(chunk_tokens))
 
@@ -400,7 +409,7 @@ def create_app(
 ) -> FastAPI:
     if FastAPI is None:
         raise RuntimeError("FastAPI not installed. Install with `pip install fastapi uvicorn`.")
-    app = FastAPI(title="Spam Detector (BERT)", version="1.3.0")
+    app = FastAPI(title="Spam Detector (BERT)", version="1.3.1")
 
     @app.get("/health")
     def health():
@@ -420,6 +429,7 @@ def create_app(
             "chunk_size": CHUNK_SIZE,
             "chunk_overlap": CHUNK_OVERLAP,
             "default_aggregation": DEFAULT_AGGREGATION,
+            "use_slow_tokenizer": USE_SLOW_TOKENIZER,
         }
 
     @app.post("/classify")
