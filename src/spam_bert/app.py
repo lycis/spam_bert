@@ -310,7 +310,7 @@ def make_classifier(model_source: str):
     Build a short-lived pipeline using a fresh tokenizer to avoid
     Rust tokenizers' concurrency issues ("Already borrowed").
     """
-    tok = AutoTokenizer.from_pretrained(model_source, use_fast=not USE_SLOW_TOKENIZER)
+    tok = get_tokenizer(model_source)
     mdl = get_model_cached(model_source)
     return pipeline("text-classification", model=mdl, tokenizer=tok)
 
@@ -426,12 +426,7 @@ class ClassifyRequest(BaseModel):
     decay: Optional[float] = None
 
 
-def create_app(
-    default_model: Optional[str],
-    default_threshold: float,
-    local_dir: Optional[str],
-    model_cache_dir: Optional[str]
-) -> FastAPI:
+def create_app(default_model: Optional[str], default_threshold: float, local_dir: Optional[str], model_cache_dir: Optional[str]) -> FastAPI:
     if FastAPI is None:
         raise RuntimeError("FastAPI not installed. Install with `pip install fastapi uvicorn`.")
     app = FastAPI(title="Spam Detector (BERT)", version="1.3.1")
