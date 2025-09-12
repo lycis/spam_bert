@@ -27,7 +27,7 @@ from pathlib import Path
 from typing import Optional, Dict, Any, List
 
 # Transformers / HF Hub
-from transformers import AutoTokenizer, AutoModelForSequenceClassification, pipeline
+from transformers import AutoTokenizer, AutoModelForSequenceClassification, Pipeline, pipeline, PreTrainedTokenizer
 from huggingface_hub import snapshot_download  # hf_hub_url not needed here
 
 # Email parsing
@@ -55,6 +55,31 @@ DEFAULT_AGGREGATION = "mean"
 # Allow forcing slow (Python) tokenizer if desired
 USE_SLOW_TOKENIZER = os.getenv("SPAMBERT_USE_SLOW_TOKENIZER", "0").strip() in {"1", "true", "yes"}
 
+
+def get_tokenizer(model_name: str, **kwargs: Any) -> PreTrainedTokenizer:
+    """Returns a tokenizer for the specified model.
+
+    Args:
+        model_name: Name or path of the pretrained model.
+        **kwargs: Additional arguments to pass to `AutoTokenizer.from_pretrained`.
+
+    Returns:
+        PreTrainedTokenizer: The loaded tokenizer.
+    """
+    return AutoTokenizer.from_pretrained(model_name, use_fast=not USE_SLOW_TOKENIZER, **kwargs)
+
+@lru_cache(maxsize=1)
+def get_pipeline_cached(model_name: str, **kwargs: Any) -> Pipeline:
+    """Returns a cached pipeline for the specified model.
+
+    Args:
+        model_name: Name or path of the pretrained model.
+        **kwargs: Additional arguments to pass to `pipeline`.
+
+    Returns:
+        Pipeline: The cached pipeline.
+    """
+    return pipeline("text-classification", model=model_name, **kwargs)
 
 # ---------- Utilities ----------
 def html_to_text(html: str) -> str:
