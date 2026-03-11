@@ -43,8 +43,8 @@ except ImportError:
 
 
 # ---------- Config ----------
-DEFAULT_MODEL = "prancyFox/tiny-bert-enron-spam"
-DEFAULT_THRESHOLD = 0.6
+DEFAULT_MODEL = "prancyFox/spambert-tinybert-real-plus-synth-v0.9-thr057"
+DEFAULT_THRESHOLD = 0.571892
 # Fallback local dir (used if present and --local-model-dir not provided)
 DEFAULT_LOCAL_MODEL_DIR = Path(__file__).parent / "models" / "email-spam"
 

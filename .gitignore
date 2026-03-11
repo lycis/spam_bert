@@ -37,6 +37,7 @@ huggingface/
 cache/
 transformers_cache/
 models_cache/
+.hf_cache/
 models/email-spam/
 **/pytorch_model.bin
 **/tf_model.h5

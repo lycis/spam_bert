@@ -60,10 +60,10 @@ python spam_bert.py <input> [options]
 
 | Option                   | Description                                                                                                                                                                                                                                                                                              |
 | ------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `--model MODEL`          | Hugging Face model ID or local directory path. Default: `mshenoda/roberta-spam`.                                                                                                                                                                                                                         |
+| `--model MODEL`          | Hugging Face model ID or local directory path. Default: `prancyFox/spambert-tinybert-real-plus-synth-v0.9-thr057`.                                                                                                                                                                                       |
 | `--local-model-dir PATH` | Path to a local model directory for offline use.                                                                                                                                                                                                                                                         |
 | `--model-cache-dir PATH` | Directory to store/download models from Hugging Face (avoids default hidden cache).                                                                                                                                                                                                                      |
-| `--threshold FLOAT`      | Spam probability threshold. Default: `0.6`.                                                                                                                                                                                                                                                              |
+| `--threshold FLOAT`      | Spam probability threshold. Default: `0.571892`.                                                                                                                                                                                                                                                         |
 | `--no-chunk`             | Disable chunking for long texts (truncate to model max length instead).                                                                                                                                                                                                                                  |
 | `--aggregation METHOD`   | How to combine spam probabilities from multiple chunks|
 | `--pretty`               | Pretty-print JSON output.                                                                                                                                                                                                                                                                                |
@@ -102,7 +102,7 @@ curl -X POST http://localhost:9000/classify \
 {
   "decision": "spam",
   "spam_probability": 0.9871,
-  "threshold": 0.6,
+  "threshold": 0.571892,
   "chunks": 1,
   "aggregation": "max",
   "model_source": "AntiSpamInstitute/spam-detector-bert-MoE-v2.2",
@@ -177,10 +177,10 @@ Instead of passing parameters every time, you can set them via `-e` when running
 
 | Environment Variable       | Equivalent CLI Option | Description                                                    |
 | -------------------------- | --------------------- | -------------------------------------------------------------- |
-| `SPAMBERT_MODEL`           | `--model`             | HF model ID (e.g., `prancyFox/tiny-bert-enron-spam`).          |
+| `SPAMBERT_MODEL`           | `--model`             | HF model ID (e.g., `prancyFox/spambert-tinybert-real-plus-synth-v0.9-thr057`). |
 | `SPAMBERT_LOCAL_MODEL_DIR` | `--local-model-dir`   | Path to a mounted local model for offline use.                 |
 | `SPAMBERT_MODEL_CACHE_DIR` | `--model-cache-dir`   | Directory for HF snapshots (mount a volume to persist).        |
-| `SPAMBERT_THRESHOLD`       | `--threshold`         | Global spam threshold (e.g., `0.6`).                           |
+| `SPAMBERT_THRESHOLD`       | `--threshold`         | Global spam threshold (e.g., `0.571892`).                      |
 | `SPAMBERT_NO_CHUNK`        | `--no-chunk`          | Set to `1/true/yes` to disable chunking.                       |
 | `SPAMBERT_AGGREGATION`     | `--aggregation`       | Aggregation method (e.g., `mean`, `noisy_or`, `topk_mean`, …). |
 | `SPAMBERT_TOPK`            | `--topk`              | K for `topk_mean` and `k_of_n`.                                |
@@ -195,7 +195,7 @@ Instead of passing parameters every time, you can set them via `-e` when running
 #### Custom model via env (clean docker-compose)
 ```bash
 docker run --rm -p 8000:8000 \
-  -e SPAMBERT_MODEL=prancyFox/tiny-bert-enron-spam \
+  -e SPAMBERT_MODEL=prancyFox/spambert-tinybert-real-plus-synth-v0.9-thr057 \
   -e HF_HOME=/hf_cache \
   -v $(pwd)/models_cache:/hf_cache \
   ghcr.io/lycis/spam_bert:latest
@@ -214,10 +214,10 @@ docker run --rm -p 8000:8000 \
 #### Tune behavior (aggregation & thresholds)
 ``bash
 docker run --rm -p 9000:9000 \
-  -e SPAMBERT_MODEL=prancyFox/tiny-bert-enron-spam \
+  -e SPAMBERT_MODEL=prancyFox/spambert-tinybert-real-plus-synth-v0.9-thr057 \
   -e SPAMBERT_AGGREGATION=noisy_or \
   -e SPAMBERT_PER_CHUNK_THR=0.7 \
-  -e SPAMBERT_THRESHOLD=0.6 \
+  -e SPAMBERT_THRESHOLD=0.571892 \
   -e SPAMBERT_PORT=9000 \
   ghcr.io/lycis/spam_bert:latest --serve
 ```
@@ -229,40 +229,42 @@ docker run --rm -p 9000:9000 \
 
 The same arguments apply whether running CLI mode or API mode in Docker.
 
-Note: The default model (prancyFox/tiny-bert-enron-spam) was trained using the train/train.py script in this repository. You can fine-tune your own model with that script and mount it into the container.
+Note: The default model (`prancyFox/spambert-tinybert-real-plus-synth-v0.9-thr057`) was trained in this repository from a TinyBERT base with mixed real and synthetic spam data. You can fine-tune your own model and mount it into the container.
 
 ## 🐾 Default Model
-By default, **Spam BERT Detector** ships with [`prancyFox/tiny-bert-enron-spam`](https://huggingface.co/prancyFox/tiny-bert-enron-spam),
-a **TinyBERT**-based spam/ham classifier fine-tuned on the **Enron Email Spam Dataset**.
+By default, **Spam BERT Detector** ships with [`prancyFox/spambert-tinybert-real-plus-synth-v0.9-thr057`](https://huggingface.co/prancyFox/spambert-tinybert-real-plus-synth-v0.9-thr057),
+a **TinyBERT**-based spam/ham classifier fine-tuned on mixed real and synthetic spam data.
 
 **Why this model?**
 
-* **Lightweight** – TinyBERT architecture for fast inference (<50 ms typical per email) with low RAM use.
-* **Domain-tuned** – Trained on thousands of real corporate emails (ham and spam) from the Enron corpus.
-* **Balanced** – High spam recall without sacrificing ham precision.
+* **Lightweight** – TinyBERT architecture for fast inference with modest RAM use.
+* **Hybrid training** – Trained from a real-data baseline with synthetic spam augmentation.
+* **Tuned operating point** – Default threshold set to `0.571892` from held-out validation tuning.
+* **Low false positives** – Strong spam recall while keeping ham misclassification low on the full real dataset.
 * **Offline-ready** – Can be bundled locally with `--local-model-dir` for air-gapped deployments.
 
-**Performance (Evaluation on held-out Enron test set):**
+**Performance (Evaluation on the full real processed dataset used in this repository):**
 
 | Class         | Precision  | Recall     | F1         |
 | ------------- | ---------- | ---------- | ---------- |
-| Ham           | 0.6875     | 0.9973     | 0.8139     |
-| Spam          | 0.9954     | 0.5632     | 0.7194     |
-| **Macro Avg** | **0.8414** | **0.7802** | **0.7666** |
+| Ham           | 0.9786     | 0.9960     | 0.9873     |
+| Spam          | 0.9574     | 0.8036     | 0.8738     |
+| **Macro Avg** | **0.9680** | **0.8998** | **0.9305** |
 
 **Additional Metrics:**
 
-* **ROC-AUC**: 0.9977
+* **Accuracy**: 0.9769
+* **Threshold**: 0.571892
 * **Confusion Matrix**:
 
   ```
-  [[16500    45]   # ham correctly classified vs. ham misclassified
-   [ 7500  9671]]  # spam misclassified as ham vs. spam correctly classified
+  [[504   2]   # ham correctly classified vs. ham misclassified
+   [ 11  45]]  # spam misclassified as ham vs. spam correctly classified
   ```
 
 **Default behavior:**
 
-* If `--model` is not specified, the detector loads `prancyFox/tiny-bert-enron-spam` from Hugging Face.
+* If `--model` is not specified, the detector loads `prancyFox/spambert-tinybert-real-plus-synth-v0.9-thr057` from Hugging Face.
 * Override with **any** Hugging Face `text-classification` model or a path to a local fine-tuned model.
 
 **Example:**
@@ -276,8 +278,8 @@ python spam_bert.py email.eml --model my-org/spam-detector-v2
 ```
 
 **Training your own model:**
-The exact [`train/train.py`](train/train.py) script in this repository was used to fine-tune
-`prancyFox/tiny-bert-enron-spam`. You can use the same script to train a replacement model
+The training scripts in [`train/`](train/) were used to build
+`prancyFox/spambert-tinybert-real-plus-synth-v0.9-thr057`. You can use the same scripts to train a replacement model
 on your own dataset. It supports:
 
 * Preprocessing for `.eml`, `.txt`, and `.csv` spam datasets
